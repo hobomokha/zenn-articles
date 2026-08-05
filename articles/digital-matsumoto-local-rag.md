@@ -69,6 +69,23 @@ data/*.md（自分のメモ）
 
 これがRAG（Retrieval-Augmented Generation、検索で補強した生成）の最小形だ。LLMそのものに自分の情報を再学習させるのではない。**質問のたびに、関係しそうな資料だけを探してプロンプトに添える**。
 
+### 先に覚える言葉は6つだけ
+
+初めて見る言葉が続くと、処理自体は単純でも難しく見える。この記事では、次の意味で読めば十分だ。
+
+| 言葉 | この記事での意味 | たとえるなら |
+| --- | --- | --- |
+| LLM | 文章を読んで回答を作るモデル | 資料を渡すと文章を書いてくれる人 |
+| RAG | 質問に近い資料を探してからLLMへ渡す仕組み | 司書が本を探し、回答者の机に置く |
+| チャンク | 長い資料を分けた短い断片 | 本に貼った付箋単位 |
+| 埋め込み・ベクトル | 文章の意味を比較するための数字の列 | 文章を置く「意味の地図」の座標 |
+| プロンプト | LLMへ渡す指示・参考資料・質問のセット | 回答者へ渡す依頼書 |
+| API | プログラム同士が決まった形式で会話する窓口 | PythonからOllamaへ注文を出す受付 |
+
+:::message
+「ベクトルの数字を人間が読む」必要はない。この記事では、**文章を数字にすると意味の近さを計算できる**と理解できれば先へ進める。
+:::
+
 ## Digital MATSUMOTOから何を学ぶか
 
 [Digital MATSUMOTO](https://www.digitalmatsumoto.com/ja/digital-matsumoto/) は、人間の知識をAIが再現できるかを主題にし、特定LLMへの依存を避けつつコンテキストデザインを重視するプロジェクトだ。公開リポジトリでは、人格・知識（RAG）・会話履歴・状況・入力情報を別々のコンテキストとして扱い、必要なものを組み立ててLLMへ渡す構成が示されている。[公開リポジトリ](https://github.com/m07takash/DigitalMATSUMOTO)
@@ -134,19 +151,26 @@ OllamaのローカルAPIは通常 `http://localhost:11434` で動く。この記
 ## Step 1：Ollamaと2つのモデルを準備する
 
 1. [Ollamaのダウンロードページ](https://ollama.com/download) からアプリをインストールして起動する。macOSでは、公式ドキュメントのとおりアプリをApplicationsへ入れる方法が標準である。
-2. ターミナルを開き、次を実行する。
+2. ターミナルを開き、次を1行ずつ実行する。ターミナルは、文字でPCへ命令するアプリである。macOSならSpotlightで「ターミナル」と検索すれば開ける。
 
 ```bash
+# 検索用モデルをPCへダウンロードする
 ollama pull embeddinggemma
+
+# 回答用モデルをPCへダウンロードする
 ollama pull gemma3:4b
+
+# ダウンロード済みモデルの一覧を表示する
 ollama list
 ```
 
-`ollama list` に2つのモデルが表示されれば準備完了だ。Ollamaの埋め込みAPIは、入力したテキスト（複数可）を埋め込みベクトルへ変換して返す。検索時と質問時には**同じ埋め込みモデル**を使うのが基本である。[OllamaのEmbeddingドキュメント](https://docs.ollama.com/capabilities/embeddings)
+`pull` は「インターネットからモデルを取得する」、`list` は「PCにあるモデルを確認する」という意味だ。`ollama list` に `embeddinggemma` と `gemma3:4b` が表示されれば準備完了である。
+
+Ollamaの埋め込みAPIは、入力したテキスト（複数可）を埋め込みベクトルへ変換して返す。検索するメモと質問は、**同じ埋め込みモデル**で数字にするのが基本である。違う地図で作った座標同士は、正しく距離を比べられないからだ。[OllamaのEmbeddingドキュメント](https://docs.ollama.com/capabilities/embeddings)
 
 ## Step 2：作業フォルダを作る
 
-好きな場所で次の構成を作る。以降のコードとサンプルデータを、そのまま同じ名前で保存すればよい。
+好きな場所に `local-rag` フォルダを作り、VS Codeなどのテキストエディタで開く。その中を次の構成にする。以降のコードとサンプルデータを、そのまま同じ名前で保存すればよい。
 
 ```text
 local-rag/
@@ -154,6 +178,21 @@ local-rag/
 └── data/
     └── profile.md     # AIに参照させたいメモ
 ```
+
+図の `#` より右側は説明であり、ファイル名には含めない。`.py` はPythonプログラム、`.md` は見出しや箇条書きを書けるMarkdown文書の拡張子だ。
+
+ターミナルで作る場合は、次でもよい。
+
+```bash
+# local-ragフォルダを作り、その中へ移動する
+mkdir local-rag
+cd local-rag
+
+# メモを置くdataフォルダを作る
+mkdir data
+```
+
+`rag.py` と `data/profile.md` は、エディタで新規ファイルとして作成する。
 
 まずは練習用のメモを `data/profile.md` として保存する。実名、住所、パスワード、顧客情報などは使わない。最初は架空の内容か、公開しても困らない自分のメモだけを使おう。
 
@@ -177,7 +216,21 @@ local-rag/
 
 ## Step 3：RAG本体を書く
 
-次のコードを `rag.py` として保存する。外部Pythonパッケージは使っていない。`urllib` でOllamaのローカルAPIを呼び、検索用ベクトルはプログラムのメモリ上だけに保持する。
+次のコードを `rag.py` として保存する。外部Pythonパッケージは使っていない。Pythonに最初から入っている `urllib` でOllamaのローカルAPIを呼び、検索用ベクトルはプログラムのメモリ上だけに保持する。
+
+全部を理解してから実行する必要はない。先に、コードの地図だけ確認しておこう。
+
+| 関数 | 役割 | RAGの段階 |
+| --- | --- | --- |
+| `load_chunks()` / `split_text()` | Markdownメモを読み、短く分ける | ① 読む・分ける |
+| `embed()` | メモと質問を数字の列へ変える | ② 数値化する |
+| `cosine_similarity()` / `retrieve()` | 質問に近いメモを選ぶ | ③ 探す |
+| `generate_answer()` | 選んだメモと質問から回答を作る | ④ 答える |
+| `main()` | 上の処理を順番に呼び出す | 全体の進行役 |
+
+:::message
+コード内で `#` から始まる行は、人間向けのコメントであり実行されない。`def` から始まるまとまりは「関数」と呼ばれ、何度でも呼び出せる処理の部品である。`List[str]` や `Dict[str, Any]` は値の種類を示す型ヒントなので、最初は読み飛ばしても動作の理解には影響しない。
+:::
 
 ```python
 #!/usr/bin/env python3
@@ -185,24 +238,37 @@ local-rag/
 
 from __future__ import annotations
 
+# コマンドライン引数（--compare など）を受け取るための標準ライブラリ。
 import argparse
+# Pythonの辞書と、APIで使うJSONを相互変換する。
 import json
+# ベクトルの長さを計算するとき、平方根を使う。
 import math
+# 空行などの文字パターンで文章を分割する。
 import re
+# Windows / macOS / Linuxの違いを吸収してファイルを扱う。
 from pathlib import Path
+# 型ヒント。プログラムの動作ではなく、値の種類を読みやすくする注釈。
 from typing import Any, Dict, List, Tuple
+# Ollamaへ接続できなかった場合のエラーと、HTTP通信に使う部品。
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+# OllamaがこのPC内で待ち受けるAPIの場所。localhostは「自分のPC」という意味。
 BASE_URL = "http://localhost:11434/api"
+# 検索用モデル。文章を「意味の座標（ベクトル）」へ変換する。
 EMBED_MODEL = "embeddinggemma"
+# 回答用モデル。検索で見つけたメモを読んで、日本語の回答を作る。
 CHAT_MODEL = "gemma3:4b"
+# rag.pyと同じ場所にあるdataフォルダを、メモの置き場所にする。
 DATA_DIR = Path(__file__).parent / "data"
+# 質問に近いメモを、上位何件までLLMへ渡すか。
 TOP_K = 3
 
 
 def post_ollama(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """OllamaのローカルHTTP APIへJSONをPOSTする。"""
+    # payload（Pythonの辞書）をJSONへ変換し、Ollama宛てのリクエストを作る。
     request = Request(
         f"{BASE_URL}/{endpoint}",
         data=json.dumps(payload).encode("utf-8"),
@@ -210,9 +276,11 @@ def post_ollama(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         method="POST",
     )
     try:
+        # 最大120秒待ち、返ってきたJSONをPythonの辞書へ戻す。
         with urlopen(request, timeout=120) as response:
             return json.loads(response.read().decode("utf-8"))
     except URLError as error:
+        # 長いエラーだけを出す代わりに、初心者が先に確認する項目も表示する。
         raise SystemExit(
             "Ollamaに接続できません。アプリを起動し、"
             "`ollama pull embeddinggemma` と `ollama pull gemma3:4b` を確認してください。\n"
@@ -222,28 +290,33 @@ def post_ollama(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def split_text(text: str, chunk_size: int = 500, overlap: int = 80) -> List[str]:
     """段落をなるべく保ったまま、検索しやすい長さへ分割する。"""
+    # 空行を段落の境界として使う。空の段落は取り除く。
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    # chunksが最終的に返す断片一覧、currentが組み立て途中の断片。
     chunks: List[str] = []
     current = ""
 
     for paragraph in paragraphs:
-        # 長い段落は、理解用として単純に文字数で分ける。
+        # 1段落だけで500文字を超える場合は、単純に文字数で分ける。
         if len(paragraph) > chunk_size:
             if current:
                 chunks.append(current)
                 current = ""
+            # 80文字ずつ重ね、分割位置で文脈が完全に切れるのを和らげる。
             for start in range(0, len(paragraph), chunk_size - overlap):
                 chunks.append(paragraph[start : start + chunk_size])
             continue
 
+        # 今の断片に次の段落を足しても500文字以内かを確認する。
         candidate = f"{current}\n\n{paragraph}".strip()
         if len(candidate) <= chunk_size:
             current = candidate
         else:
             chunks.append(current)
-            # 前の末尾を少し残す。境界で文脈が切れるのを和らげるため。
+            # 前の末尾80文字を、新しい断片の冒頭にも残す。
             current = f"{current[-overlap:]}\n\n{paragraph}".strip()
 
+    # ループ終了時、組み立て途中の最後の断片も忘れず追加する。
     if current:
         chunks.append(current)
     return chunks
@@ -251,12 +324,14 @@ def split_text(text: str, chunk_size: int = 500, overlap: int = 80) -> List[str]
 
 def load_chunks() -> List[Dict[str, str]]:
     """data配下のMarkdownを読み、出典名つきのチャンク一覧にする。"""
+    # *.md は「拡張子が.mdのファイルをすべて」という指定。
     files = sorted(DATA_DIR.glob("*.md"))
     if not files:
         raise SystemExit(f"{DATA_DIR} に .md ファイルがありません。")
 
     chunks: List[Dict[str, str]] = []
     for path in files:
+        # 各ファイルを分割し、ファイル名・断片番号・本文をセットで保存する。
         for number, text in enumerate(split_text(path.read_text(encoding="utf-8")), start=1):
             chunks.append({"source": path.name, "number": str(number), "text": text})
     return chunks
@@ -264,31 +339,40 @@ def load_chunks() -> List[Dict[str, str]]:
 
 def embed(texts: List[str]) -> List[List[float]]:
     """テキスト群をまとめて埋め込みベクトルへ変換する。"""
+    # /api/embedへ文章を送り、文章ごとの数字の列（ベクトル）を受け取る。
     response = post_ollama("embed", {"model": EMBED_MODEL, "input": texts})
     return response["embeddings"]
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """2つのベクトルの向きの近さを、-1から1で返す。"""
+    # 内積。2つのベクトルが同じ方向を向くほど大きくなりやすい。
     dot = sum(x * y for x, y in zip(a, b))
+    # それぞれのベクトルの長さを計算する。
     length_a = math.sqrt(sum(x * x for x in a))
     length_b = math.sqrt(sum(y * y for y in b))
+    # 長さの影響を除き「向き」だけを比べる。長さ0なら0.0を返す。
     return dot / (length_a * length_b) if length_a and length_b else 0.0
 
 
 def retrieve(question: str, chunks: List[Dict[str, str]]) -> List[Tuple[float, Dict[str, str]]]:
     """質問に意味が近いTOP_K件の断片を選ぶ。"""
+    # ① すべてのメモ断片をベクトルにする。
     chunk_vectors = embed([chunk["text"] for chunk in chunks])
+    # ② 質問も、同じ埋め込みモデルでベクトルにする。
     question_vector = embed([question])[0]
+    # ③ 質問と各断片の近さを計算し、「類似度 + 断片」の組にする。
     scored = [
         (cosine_similarity(question_vector, vector), chunk)
         for chunk, vector in zip(chunks, chunk_vectors)
     ]
+    # ④ 類似度が高い順に並べ、上位TOP_K件だけを返す。
     return sorted(scored, key=lambda item: item[0], reverse=True)[:TOP_K]
 
 
 def generate_answer(question: str, references: List[Tuple[float, Dict[str, str]]]) -> str:
     """同じ指示文を使い、参考資料の有無だけを変えて回答させる。"""
+    # 検索された断片を、[1] [2] ... の出典番号つきテキストへ整形する。
     context = (
         "\n\n".join(
             f"[{index}] 出典: {chunk['source']} #{chunk['number']}\n{chunk['text']}"
@@ -297,6 +381,7 @@ def generate_answer(question: str, references: List[Tuple[float, Dict[str, str]]
         if references
         else "（参考資料なし）"
     )
+    # LLMへ渡す指示文。質問だけでなく、回答ルールと参考資料も一緒に渡す。
     prompt = f"""あなたは質問に日本語で簡潔に回答するアシスタントです。
 
 参考資料があるときは、その内容だけを根拠に回答してください。
@@ -310,10 +395,14 @@ def generate_answer(question: str, references: List[Tuple[float, Dict[str, str]]
 質問:
 {question}
 """
+    # /api/generateへ指示文を送り、回答を生成する。
     response = post_ollama(
         "generate",
+        # stream=Falseは、回答を分割せず完成後にまとめて受け取る設定。
+        # temperature=0は、回答のランダムさを抑えて比較しやすくする設定。
         {"model": CHAT_MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0}},
     )
+    # APIの返答から回答本文だけを取り出し、前後の余分な空白を除く。
     return response["response"].strip()
 
 
@@ -321,6 +410,7 @@ def print_references(references: List[Tuple[float, Dict[str, str]]]) -> None:
     """LLMへ渡す検索結果を、人が確認できる形で表示する。"""
     print("--- 検索結果（この内容だけをLLMへ渡す） ---")
     for index, (score, chunk) in enumerate(references, start=1):
+        # 類似度は「検索の並び順」の手掛かり。回答の正しさを表す確率ではない。
         print(f"[{index}] {chunk['source']} #{chunk['number']} / 類似度 {score:.3f}")
         print(chunk["text"])
         print()
@@ -328,6 +418,7 @@ def print_references(references: List[Tuple[float, Dict[str, str]]]) -> None:
 
 def run_self_test() -> None:
     """Ollamaなしで、分割と類似度の最低限を確認する。"""
+    # assertは、右側の条件が成立しなければエラーにする命令。
     assert len(split_text("A\n\nB", chunk_size=10, overlap=2)) == 1
     assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == 1.0
     assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
@@ -335,6 +426,7 @@ def run_self_test() -> None:
 
 
 def main() -> None:
+    # ① ターミナルで指定された質問やオプションを読み取る。
     parser = argparse.ArgumentParser(description="ローカル最小RAG")
     parser.add_argument("question", nargs="*", help="質問（省略時は対話入力）")
     parser.add_argument("--compare", action="store_true", help="同じ質問へのRAGなし・ありの回答を比較する")
@@ -342,14 +434,17 @@ def main() -> None:
     parser.add_argument("--test", action="store_true", help="Ollamaを使わない自己テスト")
     args = parser.parse_args()
 
+    # ② --testが付いていたら、Ollamaを使わず自己テストだけ行って終了する。
     if args.test:
         run_self_test()
         return
 
+    # ③ コマンドに続けて書かれた文章を質問にする。なければ入力を待つ。
     question = " ".join(args.question) or input("質問: ").strip()
     if not question:
         raise SystemExit("質問を入力してください。")
 
+    # ④ --compareでは、同じモデル・同じ質問で参考資料の有無だけを変える。
     if args.compare:
         print("=== RAGなし：LLMの一般知識だけ ===")
         print(generate_answer(question, []))
@@ -360,11 +455,14 @@ def main() -> None:
         print(generate_answer(question, references))
         return
 
+    # ⑤ 通常実行では、メモを読み、質問に近い断片を検索する。
     references = retrieve(question, load_chunks())
 
+    # --show-contextがあれば、LLMへ渡す前の検索結果も表示する。
     if args.show_context:
         print_references(references)
 
+    # ⑥ 検索結果を参考資料として渡し、最終回答を表示する。
     print("--- 回答 ---")
     print(generate_answer(question, references))
 
@@ -381,6 +479,8 @@ if __name__ == "__main__":
 python3 rag.py --test
 # self-test: OK
 ```
+
+`python3` は「Python 3でこのファイルを実行する」という命令、`--test` は通常の質問をせず簡単な動作確認だけを行うオプションだ。Windows環境などで `python3` が見つからない場合は、`python rag.py --test` も試してほしい。
 
 次に、質問と一緒に `--compare` を付けて実行する。この比較では、どちらも同じ `gemma3:4b` を使う。変えるのは、検索したメモをプロンプトへ追加するかどうかだけだ。
 
@@ -408,6 +508,16 @@ python3 rag.py --compare "仕事の進め方で大切にしていることは？
 --- 回答 ---
 現場の人が説明できる仕組みを大切にし、早い段階で利用者に見せながら改善する進め方を重視しています。[1]
 ```
+
+見る場所は3か所だけでよい。
+
+1. `RAGなし`：質問だけを渡した一般的な回答
+2. `検索結果`：Pythonがメモのどこを選び、LLMへ渡したか
+3. `RAGあり`：検索結果を根拠にした回答と `[1]` などの出典番号
+
+:::message
+画面に出る「類似度」は、質問とメモの意味がどれくらい近いかを**並べるための点数**であり、回答が正しい確率ではない。0.8なら80%正しい、という読み方はしない。
+:::
 
 違いは、モデルが急に賢くなったからではない。
 
@@ -444,6 +554,19 @@ python3 rag.py --show-context "仕事の進め方で大切にしていること�
 
 ## コードの中で何が起きたか
 
+### 0. PythonからOllamaへ依頼する
+
+`post_ollama()` は、PythonとOllamaの共通窓口だ。Pythonの辞書をJSONというデータ形式へ変換し、`http://localhost:11434/api` へ送る。
+
+この記事では、次の2種類の依頼が同じ窓口を通る。
+
+| API | 依頼すること | 返ってくるもの |
+| --- | --- | --- |
+| `/api/embed` | 文章を意味の座標へ変える | ベクトル（数字の列） |
+| `/api/generate` | 指示文と資料を読んで回答する | 日本語の文章 |
+
+`localhost` は自分のPCを指すため、遠隔のWebサービスへ送るURLではない。
+
 ### 1. チャンク化：資料を小さな断片へ分ける
 
 `split_text()` はMarkdownを約500文字ごとに分ける。文書を丸ごと1件として検索すると、「仕事」「学び方」「最近のテーマ」が混ざり、質問に対する検索精度が下がるからだ。
@@ -479,6 +602,16 @@ return sorted(scored, key=lambda item: item[0], reverse=True)[:TOP_K]
 ```
 
 これはLLMを完全に正直にする魔法ではない。それでも、根拠を**回答と一緒に確認できる形へ設計する**のは、RAGで最初に入れるべき安全装置だ。
+
+ここまでを、`main()` が次の順番で呼び出している。
+
+```text
+質問を受け取る
+  → load_chunks()     メモを読む・分ける
+  → retrieve()        数値化して近い断片を探す
+  → print_references()検索結果を人にも見せる
+  → generate_answer() 検索結果と質問から回答する
+```
 
 ## Step 5：3つの実験でRAGを体感する
 

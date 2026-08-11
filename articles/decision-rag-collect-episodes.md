@@ -3,7 +3,7 @@ title: "「あの人なら？」を4件から集める――意思決定RAGのEx
 emoji: "🗂️"
 type: "tech"
 topics: ["rag", "llm", "excel", "ai"]
-published: false
+published: true
 ---
 
 > 連載「小さく作る意思決定RAG」の第1回。
@@ -268,9 +268,7 @@ episode_id,status,validity,usage_scope,theme,decision_setting,situation,question
 - 事実、発言、解釈、例外、出典を分けた
 - どの部分を見て「本人っぽい」と判断するか言葉にした
 
-まだRAGへは入れない。次回は、この収集台帳から**承認済みで、現在も有効な行だけ**を取り出し、PythonでRAG用Markdownへ変換する。
-
-[次の記事：Excelの判断記録をAIに読ませる――RAG投入データをPythonで作る](https://zenn.dev/hobomokha/articles/decision-rag-build-knowledge-base)
+まだRAGへは入れない。次回は、このExcelから**承認済みで、現在も有効な行だけ**を取り出し、PythonでRAGへ読ませるところまで進む予定だ。
 
 ## 参考資料
 

@@ -3,7 +3,7 @@ title: "AIの記憶を4か月育てたら「世話係」が要った――エー
 emoji: "🧰"
 type: "tech"
 topics: ["claude", "claudecode", "codex", "github", "ai"]
-published: false
+published: true
 ---
 
 > 連載「外部コンテキストで記憶を補う試み」の続き。
